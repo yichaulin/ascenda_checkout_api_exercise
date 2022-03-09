@@ -15,6 +15,17 @@ const (
 
 	RespStatusSuccessed = "succeeded"
 	RespStatusFailed    = "failed"
+
+	RespOutcomeTypeIssuerDeclined = "issuer_declined"
+	RespOutcomeTypeBlocked        = "blocked"
+
+	RespOutcomeDeclinedReasonStolenCard        = "stolen_card"
+	RespOutcomeDeclinedReasonLostCard          = "lost_card"
+	RespOutcomeDeclinedReasonInsufficientFunds = "insufficient_funds"
+	RespOutcomeDeclinedReasonHighestRiskLevel  = "highest_risk_level"
+
+	RespErrorTypeInvalidReq       = "invalid_request_error"
+	RespErrorInvalidCreditCardMsg = "Invalid Primary Account Number provided"
 )
 
 type checkOutRequest struct {
@@ -25,13 +36,14 @@ type checkOutRequest struct {
 type checkOutResponse struct {
 	Status      string `json:"status"`
 	Outcome     checkoutOutcome
-	ID          string  `json:"id"`
-	Object      string  `json:"object"`
-	Amount      float64 `json:"amount"`
-	Created     uint64  `json:"created"`
-	Currency    string  `json:"currency"`
-	Customer    string  `json:"customer"`
-	Description string  `json:"description"`
+	ID          string   `json:"id"`
+	Object      string   `json:"object"`
+	Amount      float64  `json:"amount"`
+	Created     uint64   `json:"created"`
+	Currency    string   `json:"currency"`
+	Customer    string   `json:"customer"`
+	Description string   `json:"description"`
+	Error       reqError `json:"error"`
 }
 
 type checkoutOutcome struct {
@@ -40,7 +52,12 @@ type checkoutOutcome struct {
 	RiskLevel     string `json:"risk_level"`
 	RiskScore     int64  `json:"risk_score"`
 	SellerMessage string `json:"seller_message"`
-	Tp            string `json:"type"`
+	Type          string `json:"type"`
+}
+
+type reqError struct {
+	Message string `json:"message"`
+	Type    string `json:"type"`
 }
 
 func CheckOut(creditCardID string, amount float64, currency string) (res response.Response, err error) {
@@ -70,13 +87,39 @@ func normalizeCheckoutResp(resBody []byte) (res response.Response, err error) {
 	if err != nil {
 		return res, err
 	}
-
 	switch cRes.Status {
 	case RespStatusSuccessed:
 		return response.NewSuccessfulResponse(cRes), nil
 	case RespStatusFailed:
 		return response.NewFailureResponse(cRes.Outcome.Reason, cRes), nil
-	default:
-		return response.NewUnknownResponse(cRes), nil
 	}
+
+	switch cRes.Outcome.Type {
+	case RespOutcomeTypeBlocked:
+		return response.NewBlockedResponse(cRes), nil
+	case RespOutcomeTypeIssuerDeclined:
+		reason := cRes.Outcome.Reason
+		switch reason {
+		case RespOutcomeDeclinedReasonStolenCard:
+			return response.NewStolenCardResponse(cRes), nil
+		case RespOutcomeDeclinedReasonInsufficientFunds:
+			return response.NewInsufficientFundsResponse(cRes), nil
+		case RespOutcomeDeclinedReasonLostCard:
+			return response.NewLostCardResponse(cRes), nil
+		case RespOutcomeDeclinedReasonHighestRiskLevel:
+			return response.NewHighRiskLevelResponse(cRes), nil
+		default:
+			return response.NewFailureResponse(reason, cRes), nil
+		}
+	}
+
+	switch cRes.Error.Type {
+	case RespErrorTypeInvalidReq:
+		if cRes.Error.Message == RespErrorInvalidCreditCardMsg {
+			return response.NewInvalidCreditCardResponse(cRes), nil
+		}
+		return response.NewFailureResponse(cRes.Error.Message, cRes), nil
+	}
+
+	return response.NewUnknownResponse(cRes), nil
 }
